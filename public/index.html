@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DropFile | Güvenli ve Geçici Dosya Paylaşımı</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- QRious for QR Code generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    <!-- CSS Stylesheet -->
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+</head>
+<body>
+    <!-- Background glow elements for rich aesthetics -->
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+
+    <main class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo">
+                <i data-lucide="cloud-lightning" class="logo-icon"></i>
+                <span class="logo-text">DropFile</span>
+            </div>
+            <p class="tagline">Geçici, hızlı ve şifreli dosya paylaşım servisi</p>
+        </header>
+
+        <!-- Main Card -->
+        <section class="card" id="main-card">
+            <!-- STEP 1: Upload Form -->
+            <div id="upload-step" class="step-content active">
+                <div class="expiration-container">
+                    <label for="expire-select" class="field-label">
+                        <i data-lucide="clock"></i> Saklama Süresi
+                    </label>
+                    <div class="select-wrapper">
+                        <select id="expire-select">
+                            <option value="3600" selected>1 Saat (Varsayılan)</option>
+                            <option value="21600">6 Saat</option>
+                            <option value="43200">12 Saat</option>
+                            <option value="86400">24 Saat (1 Gün)</option>
+                            <option value="172800">48 Saat (2 Gün)</option>
+                        </select>
+                        <i data-lucide="chevron-down" class="select-arrow"></i>
+                    </div>
+                </div>
+
+                <!-- Drop Area -->
+                <div class="drop-zone" id="drop-zone">
+                    <input type="file" id="file-input" class="file-input" />
+                    <div class="drop-zone-content">
+                        <div class="icon-circle">
+                            <i data-lucide="upload-cloud" class="upload-icon"></i>
+                        </div>
+                        <h3>Dosyanızı sürükleyin veya seçin</h3>
+                        <p class="support-text">Maksimum dosya boyutu: <strong>100 MB</strong></p>
+                        <button class="btn btn-primary btn-select" id="select-btn">
+                            <i data-lucide="folder-open"></i> Dosya Seç
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- STEP 2: Upload Progress -->
+            <div id="progress-step" class="step-content">
+                <div class="file-preview-card">
+                    <i data-lucide="file" class="preview-icon" id="preview-file-icon"></i>
+                    <div class="file-info-text">
+                        <span class="file-name" id="progress-file-name">dosya-adi.zip</span>
+                        <span class="file-size" id="progress-file-size">0 KB</span>
+                    </div>
+                </div>
+
+                <div class="progress-container">
+                    <div class="progress-bar-wrapper">
+                        <div class="progress-bar-fill" id="progress-bar-fill"></div>
+                    </div>
+                    <div class="progress-stats">
+                        <span class="progress-percent" id="progress-percent">0%</span>
+                        <span class="progress-speed" id="progress-speed">Hazırlanıyor...</span>
+                    </div>
+                </div>
+
+                <button class="btn btn-secondary btn-cancel" id="cancel-btn">
+                    <i data-lucide="x-circle"></i> Yüklemeyi İptal Et
+                </button>
+            </div>
+
+            <!-- STEP 3: Success Results -->
+            <div id="success-step" class="step-content">
+                <div class="success-header">
+                    <div class="success-icon-circle">
+                        <i data-lucide="check-circle" class="success-icon"></i>
+                    </div>
+                    <h2>Yükleme Başarılı!</h2>
+                    <p class="success-subtitle" id="expire-notice">Dosyanız 1 saat içinde silinecektir.</p>
+                </div>
+
+                <div class="results-layout">
+                    <!-- Links Section -->
+                    <div class="links-section">
+                        <!-- Direct Link -->
+                        <div class="link-group">
+                            <label class="field-label">
+                                <i data-lucide="link-2"></i> Doğrudan İndirme Linki <span class="badge-direct">En Hızlı</span>
+                            </label>
+                            <div class="input-copy-group">
+                                <input type="text" id="direct-link-input" readonly value="" />
+                                <button class="btn btn-copy" data-target="direct-link-input">
+                                    <i data-lucide="copy" class="btn-copy-icon"></i> Kopyala
+                                </button>
+                            </div>
+                            <p class="link-hint">Bu link dosyayı tarayıcıda veya komut satırında doğrudan indirmeyi sağlar.</p>
+                        </div>
+
+                        <!-- Landing Page Link -->
+                        <div class="link-group">
+                            <label class="field-label">
+                                <i data-lucide="external-link"></i> Önizleme ve İndirme Sayfası
+                            </label>
+                            <div class="input-copy-group">
+                                <input type="text" id="page-link-input" readonly value="" />
+                                <button class="btn btn-copy" data-target="page-link-input">
+                                    <i data-lucide="copy" class="btn-copy-icon"></i> Kopyala
+                                </button>
+                            </div>
+                            <p class="link-hint">Bu link dosya detaylarını gösteren web sayfasına yönlendirir.</p>
+                        </div>
+                    </div>
+
+                    <!-- QR Code Section -->
+                    <div class="qr-section">
+                        <div class="qr-container">
+                            <canvas id="qr-code"></canvas>
+                        </div>
+                        <p class="qr-text">Mobil cihazınızdan hızlıca indirmek için kodu taratın</p>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary btn-reset" id="reset-btn">
+                    <i data-lucide="plus-circle"></i> Yeni Dosya Yükle
+                </button>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>&copy; 2026 DropFile. Tüm hakları saklıdır.</p>
+            <p class="footer-note">Dosyalar saklama süresi sonunda sistemden kalıcı olarak silinir.</p>
+        </footer>
+    </main>
+
+    <!-- JavaScript Bundle -->
+    <script src="js/app.js"></script>
+</body>
+</html>
