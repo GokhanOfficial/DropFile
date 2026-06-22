@@ -1,0 +1,13 @@
+{
+  "name": "dropfile",
+  "version": "1.0.0",
+  "description": "Encrypted temporary file sharing service",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "node-fetch": "^2.7.0"
+  }
+}

@@ -28,7 +28,7 @@
                 <i data-lucide="cloud-lightning" class="logo-icon"></i>
                 <span class="logo-text">DropFile</span>
             </div>
-            <p class="tagline">Geçici, hızlı ve şifreli dosya paylaşım servisi</p>
+            <p class="tagline">Geçici, hızlı ve sunucu tarafında şifreli dosya paylaşım servisi</p>
         </header>
 
         <!-- Main Card -->
@@ -65,6 +65,11 @@
                         </button>
                     </div>
                 </div>
+
+                <p class="security-note">
+                    <i data-lucide="lock" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>
+                    Dosyalar sunucuda AES-256-GCM ile şifrelenir, tmpfiles.org sadece şifreli kopyayı tutar.
+                </p>
             </div>
 
             <!-- STEP 2: Upload Progress -->
@@ -116,13 +121,13 @@
                                     <i data-lucide="copy" class="btn-copy-icon"></i> Kopyala
                                 </button>
                             </div>
-                            <p class="link-hint">Bu link dosyayı tarayıcıda veya komut satırında doğrudan indirmeyi sağlar.</p>
+                            <p class="link-hint">Bu link ile dosya sunucumuz üzerinden şifre çözülerek indirilir.</p>
                         </div>
 
                         <!-- Landing Page Link -->
                         <div class="link-group">
                             <label class="field-label">
-                                <i data-lucide="external-link"></i> Önizleme ve İndirme Sayfası
+                                <i data-lucide="external-link"></i> Paylaşım Linki
                             </label>
                             <div class="input-copy-group">
                                 <input type="text" id="page-link-input" readonly value="" />
@@ -130,7 +135,7 @@
                                     <i data-lucide="copy" class="btn-copy-icon"></i> Kopyala
                                 </button>
                             </div>
-                            <p class="link-hint">Bu link dosya detaylarını gösteren web sayfasına yönlendirir.</p>
+                            <p class="link-hint">Bu linki alıcıya gönderin; dosya sadece bizim sunucumuzdan indirilebilir.</p>
                         </div>
                     </div>
 

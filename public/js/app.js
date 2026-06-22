@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('file-input');
     const selectBtn = document.getElementById('select-btn');
     const expireSelect = document.getElementById('expire-select');
-    
+
     const uploadStep = document.getElementById('upload-step');
     const progressStep = document.getElementById('progress-step');
     const successStep = document.getElementById('success-step');
@@ -123,7 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentXHR.upload.addEventListener('progress', (e) => {
             if (e.lengthComputable) {
                 const percentComplete = Math.round((e.loaded / e.total) * 100);
-                
+
                 // Update Progress bar
                 progressBarFill.style.width = percentComplete + '%';
                 progressPercent.textContent = percentComplete + '%';
@@ -133,7 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (timeElapsed > 0.1) {
                     const bytesPerSecond = e.loaded / timeElapsed;
                     const speedText = formatBytes(bytesPerSecond) + '/s';
-                    
+
                     // Estimated time remaining (ETA)
                     const remainingBytes = e.total - e.loaded;
                     const remainingSeconds = Math.round(remainingBytes / bytesPerSecond);
@@ -155,13 +155,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (response.status === 'success' && response.data && response.data.url) {
                         handleUploadSuccess(response.data.url, file, expireLabel);
                     } else {
-                        handleUploadError('Sunucudan geçersiz yanıt alındı.');
+                        const message = response.message || 'Sunucudan geçersiz yanıt alındı.';
+                        handleUploadError(message);
                     }
                 } catch (e) {
                     handleUploadError('Sunucu yanıtı çözümlenemedi.');
                 }
             } else {
-                handleUploadError(`Sunucu hatası: ${currentXHR.status}`);
+                let message = `Sunucu hatası: ${currentXHR.status}`;
+                try {
+                    const parsed = JSON.parse(currentXHR.responseText);
+                    if (parsed.message) message = parsed.message;
+                } catch (_) {}
+                handleUploadError(message);
             }
         };
 
@@ -175,8 +181,8 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('Upload aborted by user');
         };
 
-        // Open and send
-        currentXHR.open('POST', 'https://tmpfiles.org/api/v1/upload');
+        // Open and send to local server (encrypts file server-side before tmpfiles.org)
+        currentXHR.open('POST', '/api/upload');
         currentXHR.send(formData);
     }
 
@@ -192,21 +198,20 @@ document.addEventListener('DOMContentLoaded', () => {
     /* ==========================================================================
        SUCCESS & ERROR UTILITIES
        ========================================================================== */
-    function handleUploadSuccess(landingUrl, file, expireLabel) {
-        // Convert landing URL to direct download URL
-        // Example landing: https://tmpfiles.org/wnw8UGzf5AAU/test.txt
-        // Example direct:  https://tmpfiles.org/dl/wnw8UGzf5AAU/test.txt
-        const directUrl = landingUrl.replace('https://tmpfiles.org/', 'https://tmpfiles.org/dl/');
+    function handleUploadSuccess(downloadUrl, file, expireLabel) {
+        // The download URL returned by our server already points to /api/download/:id
+        const directUrl = downloadUrl;
+        const pageUrl = downloadUrl;
 
         // Populate fields
         directLinkInput.value = directUrl;
-        pageLinkInput.value = landingUrl;
+        pageLinkInput.value = pageUrl;
 
         // Update notice banner
-        expireNotice.innerHTML = `<i class="clock-icon" data-lucide="clock" style="width: 14px; height: 14px; display: inline; vertical-align: middle; margin-right: 4px;"></i> Dosyanız <strong>${expireLabel}</strong> süresince saklanacaktır.`;
+        expireNotice.innerHTML = `\n            <i class="clock-icon" data-lucide="clock" style="width: 14px; height: 14px; display: inline; vertical-align: middle; margin-right: 4px;"></i>\n            Dosyanız <strong>${expireLabel}</strong> süresince şifreli şekilde saklanacaktır.\n        `;
         lucide.createIcons(); // Re-render icon in notice banner
 
-        // Generate QR Code targeting the direct download URL
+        // Generate QR Code targeting the local download URL
         generateQRCode(directUrl);
 
         // Step transition: Progress -> Success
@@ -227,11 +232,11 @@ document.addEventListener('DOMContentLoaded', () => {
         fileInput.value = '';
         directLinkInput.value = '';
         pageLinkInput.value = '';
-        
+
         // Reset steps
         switchStep(progressStep, uploadStep);
         switchStep(successStep, uploadStep);
-        
+
         currentXHR = null;
     }
 

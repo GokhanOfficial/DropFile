@@ -331,6 +331,18 @@ body {
     color: var(--color-primary);
 }
 
+.security-note {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    text-align: center;
+    margin-top: 18px;
+    line-height: 1.4;
+}
+
+.security-note i {
+    color: var(--color-success);
+}
+
 /* ==========================================================================
    BUTTONS
    ========================================================================== */
