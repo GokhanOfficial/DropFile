@@ -1,12 +1,13 @@
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const Busboy = require('busboy');
-const fetch = require('node-fetch');
 
 const PORT = 9392;
-const TMPFILES_UPLOAD_URL = 'https://tmpfiles.org/api/v1/upload';
+const TMPFILES_UPLOAD_HOST = 'tmpfiles.org';
+const TMPFILES_UPLOAD_PATH = '/api/v1/upload';
 const DATA_DIR = path.join(__dirname, 'data');
 
 const MIME_TYPES = {
@@ -195,6 +196,25 @@ function parseMultipart(req, res, callback) {
     req.pipe(busboy);
 }
 
+function httpsRequest(options, body) {
+    return new Promise((resolve, reject) => {
+        const req = https.request(options, (res) => {
+            const chunks = [];
+            res.on('data', (chunk) => chunks.push(chunk));
+            res.on('end', () => {
+                const buffer = Buffer.concat(chunks);
+                resolve({ statusCode: res.statusCode, headers: res.headers, buffer });
+            });
+            res.on('error', reject);
+        });
+        req.on('error', reject);
+        if (body) {
+            req.write(body);
+        }
+        req.end();
+    });
+}
+
 function uploadToTmpfiles(buffer, originalName) {
     const boundary = '----FormBoundary' + crypto.randomBytes(8).toString('hex');
     const metadata = Buffer.from(
@@ -206,14 +226,32 @@ function uploadToTmpfiles(buffer, originalName) {
     const ending = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf-8');
     const body = Buffer.concat([metadata, buffer, ending]);
 
-    return fetch(TMPFILES_UPLOAD_URL, {
+    return httpsRequest({
+        hostname: TMPFILES_UPLOAD_HOST,
+        path: TMPFILES_UPLOAD_PATH,
         method: 'POST',
         headers: {
             'Content-Type': `multipart/form-data; boundary=${boundary}`,
             'Content-Length': body.length
-        },
-        body: body
-    }).then(response => response.text().then(text => ({ response, text })));
+        }
+    }, body).then(response => {
+        const text = response.buffer.toString('utf-8');
+        return { response: { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode }, text };
+    });
+}
+
+function downloadFromTmpfiles(url) {
+    const parsed = new URL(url);
+    return httpsRequest({
+        hostname: parsed.hostname,
+        path: parsed.pathname + parsed.search,
+        method: 'GET'
+    }, null).then(response => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+            throw new Error(`Tmpfiles download failed: ${response.statusCode}`);
+        }
+        return response.buffer;
+    });
 }
 
 function jsonResponse(res, status, data) {
@@ -335,13 +373,7 @@ const server = http.createServer((req, res) => {
             return;
         }
 
-        fetch(record.remoteUrl)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Tmpfiles download failed: ' + response.status);
-                }
-                return response.buffer();
-            })
+        downloadFromTmpfiles(record.remoteUrl)
             .then(encryptedBuffer => {
                 try {
                     const decrypted = decryptBuffer(encryptedBuffer, record.key, record.iv);
