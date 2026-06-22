@@ -152,8 +152,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (currentXHR.status >= 200 && currentXHR.status < 300) {
                 try {
                     const response = JSON.parse(currentXHR.responseText);
-                    if (response.status === 'success' && response.data && response.data.url) {
-                        handleUploadSuccess(response.data.url, file, expireLabel);
+                    if (response.status === 'success' && response.data && response.data.directUrl) {
+                        handleUploadSuccess(response.data, file, expireLabel);
                     } else {
                         const message = response.message || 'Sunucudan geçersiz yanıt alındı.';
                         handleUploadError(message);
@@ -198,10 +198,9 @@ document.addEventListener('DOMContentLoaded', () => {
     /* ==========================================================================
        SUCCESS & ERROR UTILITIES
        ========================================================================== */
-    function handleUploadSuccess(downloadUrl, file, expireLabel) {
-        // The download URL returned by our server already points to /api/download/:id
-        const directUrl = downloadUrl;
-        const pageUrl = downloadUrl;
+    function handleUploadSuccess(responseData, file, expireLabel) {
+        const directUrl = responseData.directUrl || responseData.url;
+        const pageUrl = responseData.previewUrl || responseData.url;
 
         // Populate fields
         directLinkInput.value = directUrl;

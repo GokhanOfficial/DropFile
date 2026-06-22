@@ -38,16 +38,23 @@ const ALGORITHM = 'aes-256-gcm';
 const KEY_LENGTH = 32;   // bytes
 const IV_LENGTH = 16;    // bytes
 const TAG_LENGTH = 16;   // bytes
-const ID_LENGTH = 24;    // bytes
+const ID_LENGTH = 12;    // bytes -> ~16 url-safe base64 chars
 
 function generateId() {
-    return crypto.randomBytes(ID_LENGTH)
-        .toString('base64url')
-        .slice(0, ID_LENGTH);
+    return crypto.randomBytes(ID_LENGTH).toString('base64url');
 }
 
 function getMetadataPath(id) {
     return path.join(DATA_DIR, `${id}.json`);
+}
+
+function formatBytes(bytes, decimals = 2) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
 
 function saveFileRecord(id, record) {
@@ -311,7 +318,7 @@ const server = http.createServer((req, res) => {
                         }
 
                         const remoteUrl = parsed.data.url;
-                        const directUrl = remoteUrl.replace(
+                        const remoteDirectUrl = remoteUrl.replace(
                             'https://tmpfiles.org/',
                             'https://tmpfiles.org/dl/'
                         );
@@ -322,7 +329,7 @@ const server = http.createServer((req, res) => {
                             iv: encrypted.iv,
                             originalName: fileInfo.originalName,
                             mimeType: fileInfo.mimeType,
-                            remoteUrl: directUrl,
+                            remoteUrl: remoteDirectUrl,
                             size: fileInfo.buffer.length,
                             createdAt: now,
                             expiresAt: now + ttlSeconds * 1000
@@ -331,13 +338,15 @@ const server = http.createServer((req, res) => {
 
                         const protocol = req.headers['x-forwarded-proto'] || 'http';
                         const host = req.headers.host || `localhost:${PORT}`;
-                        const downloadUrl = `${protocol}://${host}/api/download/${id}`;
+                        const directUrl = `${protocol}://${host}/d/${id}`;
+                        const previewUrl = `${protocol}://${host}/f/${id}`;
 
                         jsonResponse(res, 200, {
                             status: 'success',
                             data: {
                                 id,
-                                url: downloadUrl,
+                                directUrl,
+                                previewUrl,
                                 expiresIn: ttlSeconds
                             }
                         });
@@ -360,10 +369,11 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // Download endpoint
-    const downloadMatch = urlPath.match(/^\/api\/download\/([A-Za-z0-9_-]+)$/);
-    if (downloadMatch && req.method === 'GET') {
-        const id = downloadMatch[1];
+    // Short download endpoint /d/:id (also keep /api/download/:id for backwards compatibility)
+    const shortDownloadMatch = urlPath.match(/^\/d\/([A-Za-z0-9_-]+)$/);
+    const apiDownloadMatch = urlPath.match(/^\/api\/download\/([A-Za-z0-9_-]+)$/);
+    if ((shortDownloadMatch || apiDownloadMatch) && req.method === 'GET') {
+        const id = (shortDownloadMatch || apiDownloadMatch)[1];
         const record = loadFileRecord(id);
         if (!record) {
             jsonResponse(res, 404, {
@@ -399,6 +409,110 @@ const server = http.createServer((req, res) => {
                     message: 'Failed to fetch encrypted file'
                 });
             });
+        return;
+    }
+
+    // Preview page endpoint /f/:id
+    const previewMatch = urlPath.match(/^\/f\/([A-Za-z0-9_-]+)$/);
+    if (previewMatch && req.method === 'GET') {
+        const id = previewMatch[1];
+        const record = loadFileRecord(id);
+        if (!record) {
+            res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(`
+                <!DOCTYPE html>
+                <html lang="tr">
+                <head><meta charset="UTF-8"><title>Dosya Bulunamadı</title></head>
+                <body style="font-family:sans-serif;text-align:center;padding:60px 20px;">
+                    <h1>Dosya Bulunamadı</h1>
+                    <p>Dosya süresi dolmuş veya silinmiş olabilir.</p>
+                </body>
+                </html>
+            `);
+            return;
+        }
+
+        const remainingMs = record.expiresAt - Date.now();
+        const remainingText = remainingMs > 0
+            ? `~${Math.ceil(remainingMs / (1000 * 60 * 60))} saat`
+            : 'süre dolmuş';
+
+        const downloadLink = `/d/${id}`;
+        const safeName = record.originalName
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+
+        res.writeHead(200, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'X-Content-Type-Options': 'nosniff'
+        });
+        res.end(`
+            <!DOCTYPE html>
+            <html lang="tr">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>${safeName} | DropFile</title>
+                <link rel="preconnect" href="https://fonts.googleapis.com">
+                <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+                <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+                <script src="https://unpkg.com/lucide@latest"></script>
+                <link rel="stylesheet" href="/css/style.css">
+            </head>
+            <body>
+                <div class="bg-glow bg-glow-1"></div>
+                <div class="bg-glow bg-glow-2"></div>
+                <main class="app-container">
+                    <header class="app-header">
+                        <div class="logo">
+                            <i data-lucide="cloud-lightning" class="logo-icon"></i>
+                            <span class="logo-text">DropFile</span>
+                        </div>
+                        <p class="tagline">Geçici ve şifreli dosya paylaşım servisi</p>
+                    </header>
+
+                    <section class="card preview-card">
+                        <div class="preview-icon-circle">
+                            <i data-lucide="file-lock-2" class="preview-icon"></i>
+                        </div>
+                        <h1 class="preview-filename">${safeName}</h1>
+
+                        <div class="preview-meta">
+                            <div class="meta-item">
+                                <i data-lucide="hard-drive"></i>
+                                <span>${formatBytes(record.size)}</span>
+                            </div>
+                            <div class="meta-item">
+                                <i data-lucide="file-type"></i>
+                                <span>${record.mimeType}</span>
+                            </div>
+                            <div class="meta-item">
+                                <i data-lucide="clock"></i>
+                                <span>${remainingText} içinde silinecek</span>
+                            </div>
+                        </div>
+
+                        <a href="${downloadLink}" class="btn btn-primary btn-download">
+                            <i data-lucide="download"></i> Dosyayı İndir
+                        </a>
+
+                        <p class="security-note">
+                            <i data-lucide="lock" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>
+                            Dosya tmpfiles.org üzerinde şifreli tutulur; indirme sırasında kendi sunucumuzda çözülür.
+                        </p>
+                    </section>
+
+                    <footer class="app-footer">
+                        <p>&copy; 2026 DropFile. Tüm hakları saklıdır.</p>
+                        <p class="footer-note">Dosyalar saklama süresi sonunda sistemden kalıcı olarak silinir.</p>
+                    </footer>
+                </main>
+                <script>lucide.createIcons();</script>
+            </body>
+            </html>
+        `);
         return;
     }
 
