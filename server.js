@@ -294,7 +294,7 @@ const server = http.createServer((req, res) => {
                         if (!response.ok) {
                             jsonResponse(res, 502, {
                                 status: 'error',
-                                message: 'Tmpfiles upload failed: ' + text
+                                message: 'Dosya yüklenemedi: ' + text
                             });
                             return;
                         }
@@ -304,7 +304,7 @@ const server = http.createServer((req, res) => {
                         } catch (e) {
                             jsonResponse(res, 502, {
                                 status: 'error',
-                                message: 'Invalid response from tmpfiles'
+                                message: 'Sunucudan geçersiz yanıt alındı'
                             });
                             return;
                         }
@@ -312,7 +312,7 @@ const server = http.createServer((req, res) => {
                         if (!parsed.data || !parsed.data.url) {
                             jsonResponse(res, 502, {
                                 status: 'error',
-                                message: 'Tmpfiles response missing URL'
+                                message: 'Sunucu yanıtı eksik'
                             });
                             return;
                         }
@@ -422,10 +422,68 @@ const server = http.createServer((req, res) => {
             res.end(`
                 <!DOCTYPE html>
                 <html lang="tr">
-                <head><meta charset="UTF-8"><title>Dosya Bulunamadı</title></head>
-                <body style="font-family:sans-serif;text-align:center;padding:60px 20px;">
-                    <h1>Dosya Bulunamadı</h1>
-                    <p>Dosya süresi dolmuş veya silinmiş olabilir.</p>
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Dosya Bulunamadı | DropFile</title>
+                    <link rel="preconnect" href="https://fonts.googleapis.com">
+                    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+                    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+                    <script src="https://unpkg.com/lucide@latest"></script>
+                    <link rel="stylesheet" href="/css/style.css">
+                </head>
+                <body>
+                    <div class="bg-glow bg-glow-1"></div>
+                    <div class="bg-glow bg-glow-2"></div>
+                    <main class="app-container">
+                        <header class="app-header">
+                            <div class="logo">
+                                <i data-lucide="cloud-lightning" class="logo-icon"></i>
+                                <span class="logo-text">DropFile</span>
+                            </div>
+                            <p class="tagline">Geçici ve şifreli dosya paylaşım servisi</p>
+                        </header>
+
+                        <section class="card not-found-card">
+                            <div class="not-found-icon-circle">
+                                <i data-lucide="file-x-2" class="not-found-icon"></i>
+                            </div>
+                            <h1 class="not-found-title">Dosya Bulunamadı</h1>
+                            <p class="not-found-message">
+                                Dosya süresi dolmuş veya silinmiş olabilir.
+                            </p>
+
+                            <ul class="not-found-reasons">
+                                <li>
+                                    <i data-lucide="clock"></i>
+                                    <span>Seçilen saklama süresi dolmuş olabilir</span>
+                                </li>
+                                <li>
+                                    <i data-lucide="trash-2"></i>
+                                    <span>Dosya kalıcı olarak silinmiş olabilir</span>
+                                </li>
+                                <li>
+                                    <i data-lucide="link-2-off"></i>
+                                    <span>Link hatalı veya eksik olabilir</span>
+                                </li>
+                            </ul>
+
+                            <a href="/" class="btn btn-primary btn-home">
+                                <i data-lucide="home"></i> Ana Sayfaya Dön
+                            </a>
+
+                            <p class="security-note">
+                                <i data-lucide="shield-check" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>
+                                Güvenliğiniz için dosyalar belirli süre sonunda otomatik olarak silinir.
+                            </p>
+                        </section>
+
+                        <footer class="app-footer">
+                            <p>&copy; 2026 DropFile. Tüm hakları saklıdır.</p>
+                            <p class="footer-note">Dosyalar saklama süresi sonunda sistemden kalıcı olarak silinir.</p>
+                        </footer>
+                    </main>
+                    <script>lucide.createIcons();</script>
                 </body>
                 </html>
             `);
@@ -500,7 +558,7 @@ const server = http.createServer((req, res) => {
 
                         <p class="security-note">
                             <i data-lucide="lock" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>
-                            Dosya tmpfiles.org üzerinde şifreli tutulur; indirme sırasında kendi sunucumuzda çözülür.
+                            Dosya uçtan uca şifreli olarak tutulur; indirme sırasında güvenli şekilde çözülür.
                         </p>
                     </section>
 

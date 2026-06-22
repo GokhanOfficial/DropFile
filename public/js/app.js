@@ -181,7 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('Upload aborted by user');
         };
 
-        // Open and send to local server (encrypts file server-side before tmpfiles.org)
+        // Open and send to local server (encrypts file server-side)
         currentXHR.open('POST', '/api/upload');
         currentXHR.send(formData);
     }
