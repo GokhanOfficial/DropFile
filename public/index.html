@@ -4,14 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DropFile | Güvenli ve Geçici Dosya Paylaşımı</title>
+    <meta name="description" content="DropFile — dosyalarınızı geçici, hızlı ve sunucu tarafında AES-256-GCM ile şifreleyerek paylaşın. 1-48 saatlik otomatik silinme süresi.">
+    <!-- Open Graph / Social -->
+    <meta property="og:title" content="DropFile | Güvenli ve Geçici Dosya Paylaşımı">
+    <meta property="og:description" content="Dosyalarınızı geçici ve uçtan uca şifreli şekilde paylaşın.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="{{OG_URL}}">
+    <meta property="og:image" content="{{OG_IMAGE}}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="DropFile | Güvenli ve Geçici Dosya Paylaşımı">
+    <meta name="twitter:description" content="Dosyalarınızı geçici ve uçtan uca şifreli şekilde paylaşın.">
+    <meta name="twitter:image" content="{{OG_IMAGE}}">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lucide@1.21.0" crossorigin="anonymous"></script>
     <!-- QRious for QR Code generation -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js" crossorigin="anonymous"></script>
     <!-- CSS Stylesheet -->
     <link rel="stylesheet" href="css/style.css">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -24,10 +35,10 @@
     <main class="app-container">
         <!-- Header -->
         <header class="app-header">
-            <div class="logo">
+            <a href="/" class="logo" aria-label="DropFile ana sayfa">
                 <i data-lucide="cloud-lightning" class="logo-icon"></i>
                 <span class="logo-text">DropFile</span>
-            </div>
+            </a>
             <p class="tagline">Geçici, hızlı ve sunucu tarafında şifreli dosya paylaşım servisi</p>
         </header>
 
@@ -53,13 +64,13 @@
 
                 <!-- Drop Area -->
                 <div class="drop-zone" id="drop-zone">
-                    <input type="file" id="file-input" class="file-input" />
+                    <input type="file" id="file-input" class="file-input" multiple />
                     <div class="drop-zone-content">
                         <div class="icon-circle">
                             <i data-lucide="upload-cloud" class="upload-icon"></i>
                         </div>
-                        <h3>Dosyanızı sürükleyin veya seçin</h3>
-                        <p class="support-text">Maksimum dosya boyutu: <strong>100 MB</strong></p>
+                        <h3>Dosyalarınızı sürükleyin veya seçin</h3>
+                        <p class="support-text">Maksimum dosya boyutu: <strong>100 MB</strong> · Birden fazla dosya seçebilirsiniz</p>
                         <button class="btn btn-primary btn-select" id="select-btn">
                             <i data-lucide="folder-open"></i> Dosya Seç
                         </button>
@@ -74,6 +85,7 @@
 
             <!-- STEP 2: Upload Progress -->
             <div id="progress-step" class="step-content">
+                <div class="progress-counter" id="progress-counter"></div>
                 <div class="file-preview-card">
                     <i data-lucide="file" class="preview-icon" id="preview-file-icon"></i>
                     <div class="file-info-text">
@@ -108,39 +120,17 @@
                 </div>
 
                 <div class="results-layout">
-                    <!-- Links Section -->
+                    <!-- Per-file link cards -->
                     <div class="links-section">
-                        <!-- Direct Download Link -->
-                        <div class="link-group">
-                            <label class="field-label">
-                                <i data-lucide="download"></i> Doğrudan İndirme Linki <span class="badge-direct">En Hızlı</span>
-                            </label>
-                            <div class="input-copy-group">
-                                <input type="text" id="direct-link-input" readonly value="" />
-                                <button class="btn btn-copy" data-target="direct-link-input">
-                                    <i data-lucide="copy" class="btn-copy-icon"></i> Kopyala
-                                </button>
-                            </div>
-                            <p class="link-hint">Bu link dosyayı doğrudan indirir.</p>
-                        </div>
+                        <div id="results-list" class="results-list"></div>
 
-                        <!-- Preview Page Link -->
-                        <div class="link-group">
-                            <label class="field-label">
-                                <i data-lucide="eye"></i> Önizleme ve İndirme Sayfası
-                            </label>
-                            <div class="input-copy-group">
-                                <input type="text" id="page-link-input" readonly value="" />
-                                <button class="btn btn-copy" data-target="page-link-input">
-                                    <i data-lucide="copy" class="btn-copy-icon"></i> Kopyala
-                                </button>
-                            </div>
-                            <p class="link-hint">Bu link dosya detaylarını gösterir; indirmek için butona basılır.</p>
-                        </div>
+                        <button class="btn btn-secondary btn-copy-all" id="copy-all-btn">
+                            <i data-lucide="copy-check"></i> Tüm Linkleri Kopyala
+                        </button>
                     </div>
 
-                    <!-- QR Code Section -->
-                    <div class="qr-section">
+                    <!-- QR Code Section (single file only) -->
+                    <div class="qr-section" id="qr-section">
                         <div class="qr-container">
                             <canvas id="qr-code"></canvas>
                         </div>
@@ -160,6 +150,9 @@
             <p class="footer-note">Dosyalar saklama süresi sonunda sistemden kalıcı olarak silinir.</p>
         </footer>
     </main>
+
+    <!-- Toast notification container -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
     <!-- JavaScript Bundle -->
     <script src="js/app.js"></script>

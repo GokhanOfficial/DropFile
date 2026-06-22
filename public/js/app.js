@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const progressStep = document.getElementById('progress-step');
     const successStep = document.getElementById('success-step');
 
+    const progressCounter = document.getElementById('progress-counter');
     const progressFileName = document.getElementById('progress-file-name');
     const progressFileSize = document.getElementById('progress-file-size');
     const progressBarFill = document.getElementById('progress-bar-fill');
@@ -20,17 +21,48 @@ document.addEventListener('DOMContentLoaded', () => {
     const cancelBtn = document.getElementById('cancel-btn');
 
     const expireNotice = document.getElementById('expire-notice');
-    const directLinkInput = document.getElementById('direct-link-input');
-    const pageLinkInput = document.getElementById('page-link-input');
+    const resultsList = document.getElementById('results-list');
+    const qrSection = document.getElementById('qr-section');
+    const copyAllBtn = document.getElementById('copy-all-btn');
     const resetBtn = document.getElementById('reset-btn');
     const qrCanvas = document.getElementById('qr-code');
 
-    // State Variables
-    let currentXHR = null;
-    let uploadStartTime = 0;
-
     // Maximum file size: 100 MB (in bytes)
     const MAX_FILE_SIZE = 100 * 1024 * 1024;
+
+    // Upload queue state
+    let uploadQueue = [];        // validated files awaiting upload
+    let uploadIndex = 0;         // index of currently uploading file
+    let results = [];            // completed uploads: {name, size, directUrl, previewUrl}
+    let currentXHR = null;
+    let uploadStartTime = 0;
+    let cancelled = false;
+
+    /* ==========================================================================
+       TOAST NOTIFICATIONS
+       ========================================================================== */
+    function showToast(message, type = 'error') {
+        const container = document.getElementById('toast-container');
+        if (!container) return;
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        const iconName = type === 'success' ? 'check-circle' : 'alert-circle';
+        toast.innerHTML = `<i data-lucide="${iconName}"></i><span>${escapeHtml(message)}</span>`;
+        container.appendChild(toast);
+        lucide.createIcons();
+        setTimeout(() => {
+            toast.classList.add('toast-out');
+            setTimeout(() => toast.remove(), 200);
+        }, 4000);
+    }
+
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
 
     /* ==========================================================================
        DRAG AND DROP HANDLERS
@@ -61,14 +93,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const dt = e.dataTransfer;
         const files = dt.files;
         if (files.length > 0) {
-            handleFileSelection(files[0]);
+            handleFilesSelection(files);
         }
     });
 
     // File Input selection handler
     fileInput.addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
-            handleFileSelection(e.target.files[0]);
+            handleFilesSelection(e.target.files);
         }
     });
 
@@ -80,26 +112,58 @@ document.addEventListener('DOMContentLoaded', () => {
     /* ==========================================================================
        FILE VALIDATION AND UPLOAD LIFE CYCLE
        ========================================================================== */
-    function handleFileSelection(file) {
-        if (!file) return;
+    function handleFilesSelection(fileList) {
+        const files = Array.from(fileList);
+        if (files.length === 0) return;
 
-        // Size check
-        if (file.size > MAX_FILE_SIZE) {
-            alert('Hata: Dosya boyutu 100 MB\'tan büyük olamaz.');
-            fileInput.value = '';
-            return;
+        // Validate each file: reject empty and oversize files, keep the rest.
+        const valid = [];
+        for (const file of files) {
+            if (file.size === 0) {
+                showToast(`"${file.name}" boş bir dosya, yüklenemez.`, 'error');
+                continue;
+            }
+            if (file.size > MAX_FILE_SIZE) {
+                showToast(`"${file.name}" 100 MB sınırını aşıyor.`, 'error');
+                continue;
+            }
+            valid.push(file);
         }
 
-        // Expiration value (seconds)
+        fileInput.value = '';
+        if (valid.length === 0) return;
+
+        // Start a fresh batch
+        uploadQueue = valid;
+        uploadIndex = 0;
+        results = [];
+        cancelled = false;
+
         const expireSeconds = expireSelect.value;
         const expireLabel = expireSelect.options[expireSelect.selectedIndex].text;
 
-        startUpload(file, expireSeconds, expireLabel);
+        startNextUpload(expireSeconds, expireLabel);
     }
 
-    function startUpload(file, expireSeconds, expireLabel) {
-        // Step transition: Upload -> Progress
-        switchStep(uploadStep, progressStep);
+    function startNextUpload(expireSeconds, expireLabel) {
+        if (cancelled) return;
+        if (uploadIndex >= uploadQueue.length) {
+            // All done
+            handleBatchComplete(expireLabel);
+            return;
+        }
+
+        const file = uploadQueue[uploadIndex];
+
+        // Step transition on first file
+        if (uploadIndex === 0) {
+            switchStep(uploadStep, progressStep);
+        }
+
+        // Counter (e.g. "2 / 5 dosya")
+        progressCounter.innerHTML = uploadQueue.length > 1
+            ? `<strong>${uploadIndex + 1}</strong> / ${uploadQueue.length} dosya yükleniyor`
+            : '';
 
         // Update preview details
         progressFileName.textContent = file.name;
@@ -123,43 +187,45 @@ document.addEventListener('DOMContentLoaded', () => {
         currentXHR.upload.addEventListener('progress', (e) => {
             if (e.lengthComputable) {
                 const percentComplete = Math.round((e.loaded / e.total) * 100);
-
-                // Update Progress bar
                 progressBarFill.style.width = percentComplete + '%';
                 progressPercent.textContent = percentComplete + '%';
 
-                // Speed calculation
-                const timeElapsed = (Date.now() - uploadStartTime) / 1000; // in seconds
+                const timeElapsed = (Date.now() - uploadStartTime) / 1000;
                 if (timeElapsed > 0.1) {
                     const bytesPerSecond = e.loaded / timeElapsed;
                     const speedText = formatBytes(bytesPerSecond) + '/s';
-
-                    // Estimated time remaining (ETA)
                     const remainingBytes = e.total - e.loaded;
                     const remainingSeconds = Math.round(remainingBytes / bytesPerSecond);
                     let etaText = '';
                     if (percentComplete < 100) {
                         etaText = remainingSeconds > 0 ? ` (${remainingSeconds}sn kaldı)` : ' (Hesaplanıyor...)';
                     }
-
                     progressSpeed.textContent = speedText + etaText;
                 }
             }
         });
 
-        // Request Completed
+        const fileRef = file;
         currentXHR.onload = function() {
             if (currentXHR.status >= 200 && currentXHR.status < 300) {
                 try {
                     const response = JSON.parse(currentXHR.responseText);
                     if (response.status === 'success' && response.data && response.data.directUrl) {
-                        handleUploadSuccess(response.data, file, expireLabel);
+                        results.push({
+                            name: fileRef.name,
+                            size: fileRef.size,
+                            directUrl: response.data.directUrl,
+                            previewUrl: response.data.previewUrl
+                        });
+                        uploadIndex++;
+                        currentXHR = null;
+                        startNextUpload(expireSeconds, expireLabel);
                     } else {
                         const message = response.message || 'Sunucudan geçersiz yanıt alındı.';
-                        handleUploadError(message);
+                        handleUploadError(message, fileRef);
                     }
                 } catch (e) {
-                    handleUploadError('Sunucu yanıtı çözümlenemedi.');
+                    handleUploadError('Sunucu yanıtı çözümlenemedi.', fileRef);
                 }
             } else {
                 let message = `Sunucu hatası: ${currentXHR.status}`;
@@ -167,16 +233,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     const parsed = JSON.parse(currentXHR.responseText);
                     if (parsed.message) message = parsed.message;
                 } catch (_) {}
-                handleUploadError(message);
+                handleUploadError(message, fileRef);
             }
         };
 
-        // Network/Cors Error
         currentXHR.onerror = function() {
-            handleUploadError('Ağ bağlantı hatası oluştu.');
+            handleUploadError('Ağ bağlantı hatası oluştu.', fileRef);
         };
 
-        // Request aborted
         currentXHR.onabort = function() {
             console.log('Upload aborted by user');
         };
@@ -186,57 +250,190 @@ document.addEventListener('DOMContentLoaded', () => {
         currentXHR.send(formData);
     }
 
-    // Cancel upload handler
-    cancelBtn.addEventListener('click', () => {
-        if (currentXHR) {
-            currentXHR.abort();
-            currentXHR = null;
-            resetApp();
+    // A single file failed: notify, skip it, continue with the rest.
+    function handleUploadError(errorMessage, file) {
+        showToast(`"${file.name}" yüklenemedi: ${errorMessage}`, 'error');
+        uploadIndex++;
+        currentXHR = null;
+        // Continue batch if not cancelled
+        if (!cancelled) {
+            const expireSeconds = expireSelect.value;
+            const expireLabel = expireSelect.options[expireSelect.selectedIndex].text;
+            // small delay so the toast is readable before next file flips the UI
+            setTimeout(() => startNextUpload(expireSeconds, expireLabel), 300);
         }
+    }
+
+    function handleBatchComplete(expireLabel) {
+        if (results.length === 0) {
+            // everything failed
+            resetApp();
+            return;
+        }
+        renderResults(expireLabel);
+        switchStep(progressStep, successStep);
+    }
+
+    /* ==========================================================================
+       SUCCESS RENDERING (per-file cards)
+       ========================================================================== */
+    function renderResults(expireLabel) {
+        // Expire notice
+        expireNotice.innerHTML = `
+            <i class="clock-icon" data-lucide="clock" style="width: 14px; height: 14px; display: inline; vertical-align: middle; margin-right: 4px;"></i>
+            Dosyalarınız <strong>${escapeHtml(expireLabel)}</strong> süresince şifreli şekilde saklanacaktır.
+        `;
+
+        // Build a card per uploaded file
+        resultsList.innerHTML = '';
+        results.forEach((r, i) => {
+            const card = document.createElement('div');
+            card.className = 'result-card';
+            card.innerHTML = `
+                <div class="result-card-header">
+                    <i data-lucide="file"></i>
+                    <span class="result-card-name" title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</span>
+                    <span class="result-card-size">${formatBytes(r.size)}</span>
+                </div>
+                <div class="link-group">
+                    <label class="field-label">
+                        <i data-lucide="download"></i> Doğrudan İndirme <span class="badge-direct">En Hızlı</span>
+                    </label>
+                    <div class="input-copy-group">
+                        <input type="text" readonly value="${escapeHtml(r.directUrl)}" />
+                        <button class="btn btn-copy" data-copy="${escapeHtml(r.directUrl)}">
+                            <i data-lucide="copy" class="btn-copy-icon"></i> Kopyala
+                        </button>
+                    </div>
+                </div>
+                <div class="link-group">
+                    <label class="field-label">
+                        <i data-lucide="eye"></i> Önizleme Sayfası
+                    </label>
+                    <div class="input-copy-group">
+                        <input type="text" readonly value="${escapeHtml(r.previewUrl)}" />
+                        <button class="btn btn-copy" data-copy="${escapeHtml(r.previewUrl)}">
+                            <i data-lucide="copy" class="btn-copy-icon"></i> Kopyala
+                        </button>
+                    </div>
+                </div>
+            `;
+            resultsList.appendChild(card);
+        });
+
+        // QR only makes sense for a single file
+        if (results.length === 1) {
+            qrSection.style.display = '';
+            document.querySelector('.results-layout').classList.remove('no-qr');
+            generateQRCode(results[0].directUrl);
+        } else {
+            qrSection.style.display = 'none';
+            document.querySelector('.results-layout').classList.add('no-qr');
+        }
+
+        // "Copy all" only useful with multiple files
+        copyAllBtn.style.display = results.length > 1 ? '' : 'none';
+
+        lucide.createIcons();
+        bindCopyButtons();
+    }
+
+    /* ==========================================================================
+       COPY TO CLIPBOARD
+       ========================================================================== */
+    function copyText(text) {
+        // navigator.clipboard requires a secure context (HTTPS/localhost).
+        // Fall back to execCommand for LAN/HTTP deployments.
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text);
+        }
+        try {
+            const ok = document.execCommand('copy');
+            return ok ? Promise.resolve() : Promise.reject(new Error('execCommand failed'));
+        } catch (e) {
+            return Promise.reject(e);
+        }
+    }
+
+    function showCopiedUI(button) {
+        const originalHTML = button.innerHTML;
+        button.classList.add('copied');
+        button.innerHTML = '<i data-lucide="check" class="btn-copy-icon"></i> Kopyalandı!';
+        lucide.createIcons();
+        setTimeout(() => {
+            button.classList.remove('copied');
+            button.innerHTML = originalHTML;
+            lucide.createIcons();
+        }, 2000);
+    }
+
+    // Select the text of an input element as a visual fallback when copy fails.
+    function selectInputText(input) {
+        input.select();
+        input.setSelectionRange(0, 99999);
+    }
+
+    function bindCopyButtons() {
+        document.querySelectorAll('.btn-copy').forEach(button => {
+            button.addEventListener('click', () => {
+                const text = button.getAttribute('data-copy');
+                if (!text) return;
+                const input = button.parentElement.querySelector('input');
+                if (input) selectInputText(input);
+
+                copyText(text)
+                    .then(() => showCopiedUI(button))
+                    .catch(() => showToast('Kopyalama başarısız oldu. Linki elle seçip kopyalayın.', 'error'));
+            });
+        });
+    }
+
+    // "Copy all" — copies every direct + preview link, one per line.
+    copyAllBtn.addEventListener('click', () => {
+        const lines = results.map(r => `${r.name}\n${r.directUrl}\n${r.previewUrl}`).join('\n\n');
+        copyText(lines)
+            .then(() => {
+                showCopiedUI(copyAllBtn);
+                showToast('Tüm linkler panoya kopyalandı.', 'success');
+            })
+            .catch(() => showToast('Kopyalama başarısız oldu.', 'error'));
     });
 
     /* ==========================================================================
-       SUCCESS & ERROR UTILITIES
+       CANCEL & RESET
        ========================================================================== */
-    function handleUploadSuccess(responseData, file, expireLabel) {
-        const directUrl = responseData.directUrl || responseData.url;
-        const pageUrl = responseData.previewUrl || responseData.url;
-
-        // Populate fields
-        directLinkInput.value = directUrl;
-        pageLinkInput.value = pageUrl;
-
-        // Update notice banner
-        expireNotice.innerHTML = `\n            <i class="clock-icon" data-lucide="clock" style="width: 14px; height: 14px; display: inline; vertical-align: middle; margin-right: 4px;"></i>\n            Dosyanız <strong>${expireLabel}</strong> süresince şifreli şekilde saklanacaktır.\n        `;
-        lucide.createIcons(); // Re-render icon in notice banner
-
-        // Generate QR Code targeting the local download URL
-        generateQRCode(directUrl);
-
-        // Step transition: Progress -> Success
-        switchStep(progressStep, successStep);
-        currentXHR = null;
-    }
-
-    function handleUploadError(errorMessage) {
-        alert(`Yükleme Başarısız: ${errorMessage}`);
+    cancelBtn.addEventListener('click', () => {
+        cancelled = true;
+        if (currentXHR) {
+            currentXHR.abort();
+            currentXHR = null;
+        }
+        showToast('Yükleme iptal edildi.', 'error');
         resetApp();
-    }
+    });
 
-    // Reset button click
     resetBtn.addEventListener('click', resetApp);
 
     function resetApp() {
-        // Clear input values
+        cancelled = true;
+        if (currentXHR) {
+            currentXHR.abort();
+            currentXHR = null;
+        }
+        // Clear state
+        uploadQueue = [];
+        uploadIndex = 0;
+        results = [];
         fileInput.value = '';
-        directLinkInput.value = '';
-        pageLinkInput.value = '';
+        resultsList.innerHTML = '';
+        progressCounter.innerHTML = '';
+        progressBarFill.style.width = '0%';
+        progressPercent.textContent = '0%';
+        progressSpeed.textContent = '';
 
-        // Reset steps
+        // Reset steps (single clean transition back to upload step)
         switchStep(progressStep, uploadStep);
         switchStep(successStep, uploadStep);
-
-        currentXHR = null;
     }
 
     // Handle smooth step toggles
@@ -252,40 +449,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /* ==========================================================================
-       COPY TO CLIPBOARD FUNCTIONS
-       ========================================================================== */
-    document.querySelectorAll('.btn-copy').forEach(button => {
-        button.addEventListener('click', () => {
-            const targetId = button.getAttribute('data-target');
-            const inputElement = document.getElementById(targetId);
-            if (!inputElement) return;
-
-            inputElement.select();
-            inputElement.setSelectionRange(0, 99999); // For mobile devices
-
-            navigator.clipboard.writeText(inputElement.value).then(() => {
-                // Copy success UI states
-                button.classList.add('copied');
-                const originalHTML = button.innerHTML;
-                button.innerHTML = '<i data-lucide="check" class="btn-copy-icon"></i> Kopyalandı!';
-                lucide.createIcons();
-
-                setTimeout(() => {
-                    button.classList.remove('copied');
-                    button.innerHTML = originalHTML;
-                    lucide.createIcons();
-                }, 2000);
-            }).catch(err => {
-                console.error('Kopyalama başarısız: ', err);
-            });
-        });
-    });
-
-    /* ==========================================================================
        QR CODE GENERATOR
        ========================================================================== */
     function generateQRCode(text) {
-        // Render QR Code using QRious
         const qr = new QRious({
             element: qrCanvas,
             value: text,

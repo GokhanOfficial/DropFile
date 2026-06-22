@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const Busboy = require('busboy');
 
-const PORT = 9392;
+const PORT = parseInt(process.env.PORT, 10) || 9392;
 const TMPFILES_UPLOAD_HOST = 'tmpfiles.org';
 const TMPFILES_UPLOAD_PATH = '/api/v1/upload';
 const DATA_DIR = path.join(__dirname, 'data');
@@ -69,22 +69,25 @@ function saveFileRecord(id, record) {
 function loadFileRecord(id) {
     const metadataPath = getMetadataPath(id);
     if (!fs.existsSync(metadataPath)) {
-        return null;
+        return { record: null, expired: false };
     }
     try {
         const payload = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
-        if (Date.now() > payload.expiresAt) {
-            deleteFileRecord(id);
-            return null;
-        }
+        const expired = Date.now() > payload.expiresAt;
+        // Note: expired records are NOT deleted here; the background TTL
+        // cleanup task below handles removal. Returning expired state lets
+        // endpoints show a dedicated "expired" message instead of a 404.
         return {
-            ...payload,
-            key: Buffer.from(payload.key, 'base64'),
-            iv: Buffer.from(payload.iv, 'base64')
+            record: {
+                ...payload,
+                key: Buffer.from(payload.key, 'base64'),
+                iv: Buffer.from(payload.iv, 'base64')
+            },
+            expired
         };
     } catch (err) {
         console.error(`Failed to load metadata for ${id}:`, err);
-        return null;
+        return { record: null, expired: false };
     }
 }
 
@@ -133,25 +136,39 @@ function getPublicFilePath(urlPath) {
     return filePath;
 }
 
-function serveStaticFile(filePath, res) {
+function serveStaticFile(filePath, res, req) {
     fs.readFile(filePath, (err, data) => {
         if (err) {
             if (err.code === 'ENOENT') {
-                res.writeHead(404, { 'Content-Type': 'text/plain' });
-                res.end('404 Not Found');
+                renderNotFoundPage(res, {
+                    title: 'Sayfa Bulunamadı',
+                    message: 'Aradığınız sayfa mevcut değil veya taşınmış olabilir.',
+                    iconName: 'compass',
+                    reasons: null
+                });
             } else {
-                res.writeHead(500, { 'Content-Type': 'text/plain' });
+                res.writeHead(500, { 'Content-Type': 'text/plain', ...setSecurityHeaders('text/plain') });
                 res.end(`Server Error: ${err.code}`);
             }
             return;
         }
         const ext = path.extname(filePath).toLowerCase();
         const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+
+        // Inject Open Graph / Twitter metadata placeholders for the homepage
+        // so social shares resolve to absolute URLs (crawlers don't run JS).
+        if (filePath.endsWith('index.html') && req) {
+            const protocol = req.headers['x-forwarded-proto'] || 'http';
+            const host = req.headers.host || `localhost:${PORT}`;
+            const base = `${protocol}://${host}`;
+            data = Buffer.from(data.toString('utf-8')
+                .replace(/\{\{OG_URL\}\}/g, base + '/')
+                .replace(/\{\{OG_IMAGE\}\}/g, base + '/preview.png'));
+        }
+
         res.writeHead(200, {
             'Content-Type': contentType,
-            'X-Content-Type-Options': 'nosniff',
-            'X-Frame-Options': 'DENY',
-            'Referrer-Policy': 'strict-origin-when-cross-origin'
+            ...setSecurityHeaders(contentType)
         });
         res.end(data);
     });
@@ -165,7 +182,11 @@ function parseMultipart(req, res, callback) {
     let fileSize = 0;
     let exceeded = false;
 
-    const busboy = Busboy({ headers: req.headers, limits: { fileSize: MAX_FILE_SIZE } });
+    const busboy = Busboy({
+        headers: req.headers,
+        limits: { fileSize: MAX_FILE_SIZE },
+        defParamCharset: 'utf8' // decode multipart field values (incl. filename) as UTF-8
+    });
 
     busboy.on('file', (fieldname, file, info) => {
         originalName = info.filename || originalName;
@@ -264,9 +285,116 @@ function downloadFromTmpfiles(url) {
 function jsonResponse(res, status, data) {
     res.writeHead(status, {
         'Content-Type': 'application/json; charset=utf-8',
-        'X-Content-Type-Options': 'nosniff'
+        ...setSecurityHeaders('application/json')
     });
     res.end(JSON.stringify(data));
+}
+
+// Centralized security headers. CSP is only attached to HTML responses
+// (inline scripts/styles in the app require 'unsafe-inline').
+function setSecurityHeaders(contentType) {
+    const headers = {
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'Referrer-Policy': 'strict-origin-when-cross-origin'
+    };
+    if (contentType && contentType.startsWith('text/html')) {
+        headers['Content-Security-Policy'] = [
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com",
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+            "font-src 'self' https://fonts.gstatic.com",
+            "img-src 'self' data:",
+            "connect-src 'self'",
+            "base-uri 'self'",
+            "form-action 'self'"
+        ].join('; ');
+    }
+    return headers;
+}
+
+// Reusable branded "not found" / "expired" page. Defaults to the
+// file-not-found variant; pass opts to render the expired or generic-404
+// variant. Avoids duplicating the HTML across the /f/:id and static 404 paths.
+function renderNotFoundPage(res, opts = {}) {
+    const {
+        statusCode = 404,
+        title = 'Dosya Bulunamadı',
+        message = 'Dosya süresi dolmuş veya silinmiş olabilir.',
+        iconName = 'file-x-2',
+        reasons = [
+            { icon: 'clock', text: 'Seçilen saklama süresi dolmuş olabilir' },
+            { icon: 'trash-2', text: 'Dosya kalıcı olarak silinmiş olabilir' },
+            { icon: 'link-2-off', text: 'Link hatalı veya eksik olabilir' }
+        ]
+    } = opts;
+
+    const reasonsHtml = Array.isArray(reasons) && reasons.length
+        ? `<ul class="not-found-reasons">${reasons.map(r => `
+            <li>
+                <i data-lucide="${r.icon}"></i>
+                <span>${r.text}</span>
+            </li>`).join('')}
+        </ul>`
+        : '';
+
+    res.writeHead(statusCode, {
+        'Content-Type': 'text/html; charset=utf-8',
+        ...setSecurityHeaders('text/html')
+    });
+    res.end(`
+        <!DOCTYPE html>
+        <html lang="tr">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>${title} | DropFile</title>
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+            <script src="https://unpkg.com/lucide@1.21.0" crossorigin="anonymous"></script>
+            <link rel="stylesheet" href="/css/style.css">
+        </head>
+        <body>
+            <div class="bg-glow bg-glow-1"></div>
+            <div class="bg-glow bg-glow-2"></div>
+            <main class="app-container">
+                <header class="app-header">
+                    <a href="/" class="logo" aria-label="DropFile ana sayfa">
+                        <i data-lucide="cloud-lightning" class="logo-icon"></i>
+                        <span class="logo-text">DropFile</span>
+                    </a>
+                    <p class="tagline">Geçici ve şifreli dosya paylaşım servisi</p>
+                </header>
+
+                <section class="card not-found-card">
+                    <div class="not-found-icon-circle">
+                        <i data-lucide="${iconName}" class="not-found-icon"></i>
+                    </div>
+                    <h1 class="not-found-title">${title}</h1>
+                    <p class="not-found-message">${message}</p>
+
+                    ${reasonsHtml}
+
+                    <a href="/" class="btn btn-primary btn-home">
+                        <i data-lucide="home"></i> Ana Sayfaya Dön
+                    </a>
+
+                    <p class="security-note">
+                        <i data-lucide="shield-check" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>
+                        Güvenliğiniz için dosyalar belirli süre sonunda otomatik olarak silinir.
+                    </p>
+                </section>
+
+                <footer class="app-footer">
+                    <p>&copy; 2026 DropFile. Tüm hakları saklıdır.</p>
+                    <p class="footer-note">Dosyalar saklama süresi sonunda sistemden kalıcı olarak silinir.</p>
+                </footer>
+            </main>
+            <script>lucide.createIcons();</script>
+        </body>
+        </html>
+    `);
 }
 
 const server = http.createServer((req, res) => {
@@ -374,7 +502,14 @@ const server = http.createServer((req, res) => {
     const apiDownloadMatch = urlPath.match(/^\/api\/download\/([A-Za-z0-9_-]+)$/);
     if ((shortDownloadMatch || apiDownloadMatch) && req.method === 'GET') {
         const id = (shortDownloadMatch || apiDownloadMatch)[1];
-        const record = loadFileRecord(id);
+        const { record, expired } = loadFileRecord(id);
+        if (expired) {
+            jsonResponse(res, 404, {
+                status: 'error',
+                message: 'Bu dosyanın süresi dolmuş'
+            });
+            return;
+        }
         if (!record) {
             jsonResponse(res, 404, {
                 status: 'error',
@@ -387,11 +522,15 @@ const server = http.createServer((req, res) => {
             .then(encryptedBuffer => {
                 try {
                     const decrypted = decryptBuffer(encryptedBuffer, record.key, record.iv);
+                    // Strip CRLF to prevent header injection; RFC 5987 filename*
+                    // carries UTF-8 names safely for modern browsers.
+                    const safeName = (record.originalName || 'file').replace(/[\r\n]+/g, ' ').trim();
+                    const encodedName = encodeURIComponent(safeName);
                     res.writeHead(200, {
                         'Content-Type': record.mimeType || 'application/octet-stream',
                         'Content-Length': decrypted.length,
-                        'Content-Disposition': `attachment; filename="${encodeURIComponent(record.originalName)}"`,
-                        'X-Content-Type-Options': 'nosniff'
+                        'Content-Disposition': `attachment; filename="${encodedName}"; filename*=UTF-8''${encodedName}`,
+                        ...setSecurityHeaders(record.mimeType)
                     });
                     res.end(decrypted);
                 } catch (err) {
@@ -416,84 +555,26 @@ const server = http.createServer((req, res) => {
     const previewMatch = urlPath.match(/^\/f\/([A-Za-z0-9_-]+)$/);
     if (previewMatch && req.method === 'GET') {
         const id = previewMatch[1];
-        const record = loadFileRecord(id);
+        const { record, expired } = loadFileRecord(id);
+        if (expired) {
+            renderNotFoundPage(res, {
+                title: 'Süresi Dolmuş',
+                message: 'Bu dosyanın saklama süresi dolduğu için artık erişilemez.',
+                iconName: 'timer-off',
+                reasons: [
+                    { icon: 'clock', text: 'Seçilen saklama süresi dolmuş' },
+                    { icon: 'trash-2', text: 'Dosya yakında kalıcı olarak silinecek' }
+                ]
+            });
+            return;
+        }
         if (!record) {
-            res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(`
-                <!DOCTYPE html>
-                <html lang="tr">
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>Dosya Bulunamadı | DropFile</title>
-                    <link rel="preconnect" href="https://fonts.googleapis.com">
-                    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-                    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-                    <script src="https://unpkg.com/lucide@latest"></script>
-                    <link rel="stylesheet" href="/css/style.css">
-                </head>
-                <body>
-                    <div class="bg-glow bg-glow-1"></div>
-                    <div class="bg-glow bg-glow-2"></div>
-                    <main class="app-container">
-                        <header class="app-header">
-                            <div class="logo">
-                                <i data-lucide="cloud-lightning" class="logo-icon"></i>
-                                <span class="logo-text">DropFile</span>
-                            </div>
-                            <p class="tagline">Geçici ve şifreli dosya paylaşım servisi</p>
-                        </header>
-
-                        <section class="card not-found-card">
-                            <div class="not-found-icon-circle">
-                                <i data-lucide="file-x-2" class="not-found-icon"></i>
-                            </div>
-                            <h1 class="not-found-title">Dosya Bulunamadı</h1>
-                            <p class="not-found-message">
-                                Dosya süresi dolmuş veya silinmiş olabilir.
-                            </p>
-
-                            <ul class="not-found-reasons">
-                                <li>
-                                    <i data-lucide="clock"></i>
-                                    <span>Seçilen saklama süresi dolmuş olabilir</span>
-                                </li>
-                                <li>
-                                    <i data-lucide="trash-2"></i>
-                                    <span>Dosya kalıcı olarak silinmiş olabilir</span>
-                                </li>
-                                <li>
-                                    <i data-lucide="link-2-off"></i>
-                                    <span>Link hatalı veya eksik olabilir</span>
-                                </li>
-                            </ul>
-
-                            <a href="/" class="btn btn-primary btn-home">
-                                <i data-lucide="home"></i> Ana Sayfaya Dön
-                            </a>
-
-                            <p class="security-note">
-                                <i data-lucide="shield-check" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;"></i>
-                                Güvenliğiniz için dosyalar belirli süre sonunda otomatik olarak silinir.
-                            </p>
-                        </section>
-
-                        <footer class="app-footer">
-                            <p>&copy; 2026 DropFile. Tüm hakları saklıdır.</p>
-                            <p class="footer-note">Dosyalar saklama süresi sonunda sistemden kalıcı olarak silinir.</p>
-                        </footer>
-                    </main>
-                    <script>lucide.createIcons();</script>
-                </body>
-                </html>
-            `);
+            renderNotFoundPage(res);
             return;
         }
 
         const remainingMs = record.expiresAt - Date.now();
-        const remainingText = remainingMs > 0
-            ? `~${Math.ceil(remainingMs / (1000 * 60 * 60))} saat`
-            : 'süre dolmuş';
+        const remainingText = `~${Math.ceil(remainingMs / (1000 * 60 * 60))} saat`;
 
         const downloadLink = `/d/${id}`;
         const safeName = record.originalName
@@ -504,7 +585,7 @@ const server = http.createServer((req, res) => {
 
         res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
-            'X-Content-Type-Options': 'nosniff'
+            ...setSecurityHeaders('text/html')
         });
         res.end(`
             <!DOCTYPE html>
@@ -516,7 +597,7 @@ const server = http.createServer((req, res) => {
                 <link rel="preconnect" href="https://fonts.googleapis.com">
                 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
                 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-                <script src="https://unpkg.com/lucide@latest"></script>
+                <script src="https://unpkg.com/lucide@1.21.0" crossorigin="anonymous"></script>
                 <link rel="stylesheet" href="/css/style.css">
             </head>
             <body>
@@ -524,10 +605,10 @@ const server = http.createServer((req, res) => {
                 <div class="bg-glow bg-glow-2"></div>
                 <main class="app-container">
                     <header class="app-header">
-                        <div class="logo">
+                        <a href="/" class="logo" aria-label="DropFile ana sayfa">
                             <i data-lucide="cloud-lightning" class="logo-icon"></i>
                             <span class="logo-text">DropFile</span>
-                        </div>
+                        </a>
                         <p class="tagline">Geçici ve şifreli dosya paylaşım servisi</p>
                     </header>
 
@@ -588,7 +669,7 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    serveStaticFile(filePath, res);
+    serveStaticFile(filePath, res, req);
 });
 
 // Background TTL cleanup every minute: remove expired metadata files
