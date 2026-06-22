@@ -4,7 +4,6 @@ const path = require('path');
 const crypto = require('crypto');
 const Busboy = require('busboy');
 const fetch = require('node-fetch');
-const { Readable } = require('stream');
 
 const PORT = 9392;
 const TMPFILES_UPLOAD_URL = 'https://tmpfiles.org/api/v1/upload';
@@ -210,9 +209,10 @@ function uploadToTmpfiles(buffer, originalName) {
     return fetch(TMPFILES_UPLOAD_URL, {
         method: 'POST',
         headers: {
-            'Content-Type': `multipart/form-data; boundary=${boundary}`
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': body.length
         },
-        body: Readable.from([body])
+        body: body
     }).then(response => response.text().then(text => ({ response, text })));
 }
 
