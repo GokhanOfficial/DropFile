@@ -176,7 +176,7 @@ function serveStaticFile(filePath, res, req) {
 
 function parseMultipart(req, res, callback) {
     let fileBuffer = Buffer.alloc(0);
-    let expireSeconds = '3600';
+    let expireSeconds = '86400';
     let originalName = 'file';
     let mimeType = 'application/octet-stream';
     let fileSize = 0;
@@ -268,13 +268,35 @@ function uploadToTmpfiles(buffer, originalName) {
     });
 }
 
-function downloadFromTmpfiles(url) {
+// tmpfiles.org serves downloads through a redirect (302 -> /<id>/... HTML
+// page) whose body embeds the real file URL (/dl/<timestamp>/<id>/...).
+// Follow the redirect, then extract the embedded URL if the response is
+// HTML, and fetch the encrypted blob from the final location.
+function downloadFromTmpfiles(url, depth = 0) {
     const parsed = new URL(url);
     return httpsRequest({
         hostname: parsed.hostname,
         path: parsed.pathname + parsed.search,
         method: 'GET'
     }, null).then(response => {
+        // Follow redirects (Location header) up to a small depth.
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+            if (depth >= 3) {
+                throw new Error('Tmpfiles download failed: too many redirects');
+            }
+            return downloadFromTmpfiles(new URL(response.headers.location, url).href, depth + 1);
+        }
+
+        // HTML body: extract the embedded direct download URL.
+        const contentType = response.headers['content-type'] || '';
+        if (contentType.includes('text/html') && response.statusCode === 200) {
+            const match = response.buffer.toString('utf-8').match(/https:\/\/tmpfiles\.org\/dl\/[^"'\s<>]+/);
+            if (match) {
+                return downloadFromTmpfiles(match[0], depth + 1);
+            }
+            throw new Error('Tmpfiles download failed: could not locate direct URL in download page');
+        }
+
         if (response.statusCode < 200 || response.statusCode >= 300) {
             throw new Error(`Tmpfiles download failed: ${response.statusCode}`);
         }
@@ -414,7 +436,7 @@ const server = http.createServer((req, res) => {
 
                 let ttlSeconds = parseInt(fileInfo.expireSeconds, 10);
                 if (isNaN(ttlSeconds) || ttlSeconds <= 0) {
-                    ttlSeconds = 3600;
+                    ttlSeconds = 86400;
                 }
 
                 uploadToTmpfiles(encrypted.encrypted, fileInfo.originalName)
